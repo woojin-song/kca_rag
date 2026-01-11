@@ -139,7 +139,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --------------------------------------------------
-# Session State
+# Session State Setup
 # --------------------------------------------------
 if "processor" not in st.session_state:
     st.session_state.processor = None
@@ -147,6 +147,10 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "show_sources" not in st.session_state:
     st.session_state.show_sources = {}
+# [변경됨] API Key 저장을 위한 세션 상태 초기화
+if "api_key" not in st.session_state:
+    # 이미 환경변수에 있다면 가져오고, 없으면 빈 문자열
+    st.session_state.api_key = os.getenv("OPENAI_API_KEY", "")
 
 # --------------------------------------------------
 # Sidebar
@@ -154,15 +158,27 @@ if "show_sources" not in st.session_state:
 with st.sidebar:
     st.header("⚙️ 시스템 설정")
     
-    api_key = st.text_input("OpenAI API Key", type="password")
-    if api_key:
-        os.environ["OPENAI_API_KEY"] = api_key
+    # [변경됨] 세션 상태의 값을 value로 사용하여 입력 유지
+    input_key = st.text_input(
+        "OpenAI API Key", 
+        type="password", 
+        value=st.session_state.api_key,
+        help="API Key는 세션 동안 유지됩니다."
+    )
+    
+    # [변경됨] 입력값이 있으면 세션 및 환경변수에 저장
+    if input_key:
+        st.session_state.api_key = input_key
+        os.environ["OPENAI_API_KEY"] = input_key
 
     if st.button("🔄 시스템 초기화", use_container_width=True):
-        with st.spinner("초기화 중..."):
-            st.session_state.processor = LegalDocumentProcessor()
-            result = st.session_state.processor.initialize()
-            st.success(result["message"])
+        if not os.environ.get("OPENAI_API_KEY"):
+            st.error("API Key를 먼저 입력해주세요!")
+        else:
+            with st.spinner("초기화 중..."):
+                st.session_state.processor = LegalDocumentProcessor()
+                result = st.session_state.processor.initialize()
+                st.success(result["message"])
     
     st.divider()
     
@@ -260,8 +276,12 @@ def render_loading_animation():
 st.title("⚖️ 전파법 AI 튜터")
 st.caption("전파법규 관련 질문에 정확한 답변을 제공합니다")
 
+# [변경됨] Processor 초기화 전 체크 (메시지 표시 방식 개선)
 if st.session_state.processor is None:
-    st.warning("⚠️ 좌측 사이드바에서 시스템을 초기화하세요.")
+    if not os.environ.get("OPENAI_API_KEY"):
+        st.info("👈 좌측 사이드바에서 OpenAI API Key를 입력해주세요.")
+    else:
+        st.warning("⚠️ 좌측 사이드바에서 '시스템 초기화' 버튼을 눌러주세요.")
     st.stop()
 
 # --------------------------------------------------
