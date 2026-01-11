@@ -1,8 +1,7 @@
-# legal_processor.py (최종 수정 버전 - structured output schema 오류 완전 해결)
-
 import re
+import json
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Iterator
 from collections import defaultdict
 
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
@@ -14,11 +13,11 @@ from langchain_text_splitters import (
 )
 from langchain_community.document_loaders import TextLoader
 from langchain_core.documents import Document
+from openai import OpenAI
 
-# 핵심 수정: Pydantic v2 호환 + nested model로 schema 오류 해결
 from pydantic import BaseModel, Field
 
-# nested model 정의 (OpenAI structured output schema 요구사항 충족)
+# nested model 정의
 class ReasoningItem(BaseModel):
     clause: str = Field(..., description="법령 문구 또는 조문 내용")
     interpretation: str = Field(..., description="상세 해석 및 설명")
@@ -31,7 +30,7 @@ class LawResponse(BaseModel):
         description="법령 문구와 해당 해석 리스트 (최소 1개 이상)"
     )
     conclusion: str = Field(..., description="최종 요약 한 줄")
-    references: List[str] = Field(..., description="참조 조문 번호 리스트 (예: ['전파법 제47조', '전파법 시행령 제20조'])")
+    references: List[str] = Field(..., description="참조 조문 번호 리스트")
 
 class LegalDocumentProcessor:
     """전파법규 고도화 RAG 시스템"""
@@ -51,9 +50,12 @@ class LegalDocumentProcessor:
         self.dense_retriever = None
         self.bm25_retriever = None
         
-        # structured output LLM (nested model로 schema 오류 해결)
+        # structured output LLM (non-streaming)
         base_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
         self.llm = base_llm.with_structured_output(LawResponse)
+        
+        # streaming용 OpenAI client
+        self.openai_client = OpenAI()
         
         self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
         
@@ -106,16 +108,15 @@ class LegalDocumentProcessor:
         )
         
         messages = [
-            ("system", "너는 이전 대화를 바탕으로 독립적인 검색 질문을 생성한다. 오직 질문만 출력하라."),
-            ("human", f"""이전 대화:
+            {"role": "system", "content": "너는 이전 대화를 바탕으로 독립적인 검색 질문을 생성한다. 오직 질문만 출력하라."},
+            {"role": "user", "content": f"""이전 대화:
 {chat_context}
 
 현재 질문: {question}
 
-독립된 검색 질문:""")
+독립된 검색 질문:"""}
         ]
         
-        # 일반 LLM 사용
         base_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
         res = base_llm.invoke(messages)
         return res.content.split("독립된 검색 질문:")[-1].strip() if "독립된 검색 질문:" in res.content else res.content.strip()
@@ -162,8 +163,8 @@ class LegalDocumentProcessor:
         return [doc_map[key] for key, _ in ranked[:top_k]]
 
     def ask_law(self, question: str, history: List[Dict] = None, top_k: int = 4) -> Tuple[dict, List[Document]]:
+        """Non-streaming 방식 (기존 유지)"""
         standalone_q = self._get_standalone_question(question, history or [])
-        
         docs = self.fusion_retrieve(standalone_q, top_k=top_k)
         
         context = ""
@@ -186,10 +187,8 @@ class LegalDocumentProcessor:
                 messages.append((role, content))
         messages.append(("human", question))
 
-        # structured output → 자동 파싱 (schema 오류 해결)
         response: LawResponse = self.llm.invoke(messages)
         
-        # dict로 변환 (nested model 반영)
         result_dict = {
             "answer": response.answer,
             "reasoning": [
@@ -201,6 +200,77 @@ class LegalDocumentProcessor:
         }
         
         return result_dict, docs
+
+    def ask_law_stream(self, question: str, history: List[Dict] = None, top_k: int = 4) -> Iterator[Dict]:
+        """
+        Streaming 방식: 마커 기반 출력
+        yield {"type": "token", "content": "..."}
+        yield {"type": "done", "data": {...}}
+        """
+        standalone_q = self._get_standalone_question(question, history or [])
+        docs = self.fusion_retrieve(standalone_q, top_k=top_k)
+        
+        context = ""
+        for i, d in enumerate(docs):
+            path = d.metadata.get("full_context", "일반")
+            ref_info = ", ".join(d.metadata.get("law_refs", [])[:2])
+            context += f"[{i+1}] 위치: {path}\n관련법규: {ref_info}\n내용: {d.page_content}\n\n"
+
+        system_msg = f"""당신은 대한민국 전파법 전문가입니다. 제공된 [근거 자료]만을 바탕으로 정확히 답변하세요.
+
+[근거 자료]
+{context}
+
+**중요**: 반드시 아래 형식을 엄격히 지켜 답변하세요:
+
+<ANSWER>
+정답 또는 핵심 결론 (한 문장)
+</ANSWER>
+
+<REASONING>
+[
+  {{"clause": "전파법 제XX조", "interpretation": "해당 조문의 상세 해석"}},
+  {{"clause": "관련 법령 문구", "interpretation": "추가 설명"}}
+]
+</REASONING>
+
+<SUMMARY>
+최종 요약 한 줄
+</SUMMARY>
+
+<REFERENCES>
+["전파법 제XX조", "전파법 시행령 제YY조"]
+</REFERENCES>
+"""
+
+        messages = [{"role": "system", "content": system_msg}]
+        
+        if history:
+            for m in history[-2:]:
+                role = "user" if m["role"] == "user" else "assistant"
+                content = m["content"] if role == "user" else m.get("content", {}).get("conclusion", "")
+                messages.append({"role": role, "content": content})
+        
+        messages.append({"role": "user", "content": question})
+
+        # OpenAI streaming 호출
+        try:
+            stream = self.openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                temperature=0,
+                stream=True
+            )
+
+            for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    token = chunk.choices[0].delta.content
+                    yield {"type": "token", "content": token}
+            
+            yield {"type": "done", "docs": docs}
+            
+        except Exception as e:
+            yield {"type": "error", "message": str(e)}
 
     def initialize(self) -> dict:
         index_path = Path(self.faiss_index_path)
