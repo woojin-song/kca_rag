@@ -28,7 +28,13 @@ st.markdown("""
     margin-bottom: 20px;
 }
 .answer-title { font-weight: 700; color: #2f855a; }
-.answer-text { font-size: 1.1rem; font-weight: 700; }
+
+/* [수정] 본문 텍스트 완전 검정으로 변경 */
+.answer-text { 
+    font-size: 1.1rem; 
+    font-weight: 700; 
+    color: #000000; 
+}
 
 .reasoning-card {
     background: white;
@@ -38,13 +44,20 @@ st.markdown("""
     margin-bottom: 10px;
 }
 .reasoning-clause { font-weight: 700; color: #1e40af; }
-.reasoning-text { color: #495057; margin-top: 6px; }
+
+/* [수정] 근거 텍스트 완전 검정으로 변경 */
+.reasoning-text { 
+    color: #000000; 
+    margin-top: 6px; 
+}
 
 .summary-card {
     background: #f1f3f5;
     padding: 14px;
     border-radius: 8px;
     margin-top: 16px;
+    /* [수정] 요약 카드 텍스트 검정 명시 */
+    color: #000000;
 }
 
 .references-card {
@@ -53,6 +66,8 @@ st.markdown("""
     border-radius: 8px;
     margin-top: 12px;
     border-left: 4px solid #f59e0b;
+    /* [수정] 참조 카드 텍스트 검정 명시 */
+    color: #000000;
 }
 
 /* 원본 조문 스타일 */
@@ -60,6 +75,13 @@ st.markdown("""
     margin-top: 20px;
     border-top: 2px solid #e5e7eb;
     padding-top: 16px;
+}
+
+/* [수정] 헤더 텍스트 색상 변경을 위한 클래스 (Python 코드 내 strong 태그 스타일 대응) */
+.source-docs-header-text {
+    color: #000000 !important;
+    font-size: 1.05rem;
+    font-weight: bold;
 }
 
 .source-doc-card {
@@ -71,9 +93,10 @@ st.markdown("""
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 
+/* [수정] 문서 헤더 검정 변경 */
 .source-doc-header {
     font-weight: 700;
-    color: #374151;
+    color: #000000;
     margin-bottom: 8px;
     padding-bottom: 6px;
     border-bottom: 1px solid #e5e7eb;
@@ -81,12 +104,13 @@ st.markdown("""
 
 .source-doc-meta {
     font-size: 0.85rem;
-    color: #6b7280;
+    color: #6b7280; /* 메타 정보는 약간 흐리게 유지하거나, 필요시 #000000으로 변경 */
     margin-bottom: 10px;
 }
 
+/* [수정] 문서 본문 내용 검정 변경 */
 .source-doc-content {
-    color: #1f2937;
+    color: #000000;
     line-height: 1.6;
     padding: 10px;
     background: #f9fafb;
@@ -137,7 +161,6 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
-
 # --------------------------------------------------
 # Session State Setup
 # --------------------------------------------------
